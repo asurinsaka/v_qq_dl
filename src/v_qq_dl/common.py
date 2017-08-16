@@ -8,6 +8,8 @@ import re
 import json
 import threading
 from subprocess import call
+from bs4 import BeautifulSoup
+import random
 
 def urlopen_with_retry(attempt, *args, **kwargs):
     for i in range(attempt):
@@ -80,6 +82,53 @@ def url_info(url):
 
     return type, ext, size
 
+def pick_a_chinese_proxy():
+    try:
+        with open('proxy.json', 'r') as fp:
+            data = json.load(fp)
+    except FileNotFoundError:
+        data = None
+    if data and 'proxy_list' in data.keys():
+        all_proxies = data['proxy_list']
+    else:
+        content = request.urlopen(
+            "http://www.proxynova.com/proxy-server-list/country-cn/").read()
+        soup = BeautifulSoup(content, 'lxml')
+        all_proxies = []
+        for row in soup.find_all('tr')[1:]:
+            try:
+                ip = row.find_all('td')[0].text.strip()         # document.write('23222.1'.substr(2) + '25.32.75')
+                ip = re.search(r"'([0-9.]+)'.*'([0-9.]+)'", ip)
+                ip = ip.group(1)[2:] + ip.group(2)
+                port = row.find_all('td')[1].text.strip()
+                cur_proxy = "{}:{}".format(ip, port)
+                all_proxies.append(cur_proxy)
+            except Exception as e:
+                logging.debug('pick_a_chinese_proxy: %s' % e)
+        if all_proxies:
+            data = {'proxy_list': all_proxies}
+            with open('proxy.json', 'w') as fp:
+                json.dump(data, fp)
+    return random.choice(all_proxies)
+
+def get_content_through_proxy(url):
+
+    logging.debug('get_content_through_proxy: %s' % url)
+    while True:
+        addr = pick_a_chinese_proxy()
+        try:
+            proxy = request.ProxyHandler({'http': addr})
+            opener = request.build_opener(proxy)
+            request.install_opener(opener)
+            req = request.Request(url)
+            response = request.urlopen(req, timeout=3)
+            data = response.read()
+        except Exception as e:
+            logging.debug('get_content_through_proxy:  %s %s ' % (addr, e))
+        else:
+            data = data.decode('utf-8')
+            logging.debug('get_content_through_proxy: %s %s' % (data, addr))
+            return data
 
 
 def get_url_from_vid(vid, title):
@@ -97,8 +146,14 @@ def get_url_from_vid(vid, title):
         info = get_content(info_api, 2)
     video_json = json.loads(re.search(r'QZOutputJson=(.*);', info).group(1))
 
+    while video_json['exem'] == 1:
+        info = get_content_through_proxy(info_api)
+        video_json = json.loads(re.search(r'QZOutputJson=(.*);', info).group(1))
+
     if video_json['exem'] != 0:
         logging.error(video_json['msg'])
+
+    download_dict[info_api] = info
 
     fn_pre = video_json['vl']['vi'][0]['lnk']
     title = video_json['vl']['vi'][0]['ti']
@@ -138,11 +193,13 @@ def get_url_from_vid(vid, title):
     else:
         download_dict['part_urls'] = part_urls
         download_dict['ext'] = ext
+        download_dict['total_size'] = total_size
         with open('{}.json'.format(vid), 'w') as fp:
             json.dump(download_dict, fp, sort_keys=True, indent=4)
 
 
 def download_with_aria2(url, out_file):
+    # TODO try to remove dependency
     call(["/usr/local/aria2/bin/aria2c", "-x", '16', url, '-o', out_file])
     pass
 
@@ -166,10 +223,6 @@ def download(vid, title, urls, ext):
         for filename in files:
             fp.write("file '{}'\n".format(filename))
 
-    # call(['/Users/asurin/bin/ffmpeg', '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
-    #       '{}.{}'.format(title, ext), '-v', '48'])
-    call(['/Users/asurin/bin/ffmpeg', '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
-          '{}.{}'.format(title, ext)])
 
 
 def script_main(script_name, **kwargs):
@@ -194,7 +247,17 @@ def script_main(script_name, **kwargs):
         logging.error('scrpt_main: can\'t get video urls or ext')
     urls = data['part_urls']
     ext = data['ext']
+    total_size = data['total_size']
     download(vid, title, urls, ext)
+
+    # TODO try to remove dependency
+    call(['/Users/asurin/bin/ffmpeg', '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
+          '{}.{}'.format(title, ext)])
+    # call(['/Users/asurin/bin/ffmpeg', '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
+    #       '{}.{}'.format(title, ext), '-v', '48'])
+
+    # TODO compare file size with total size
+
 
 
 def main(**kwargs):
