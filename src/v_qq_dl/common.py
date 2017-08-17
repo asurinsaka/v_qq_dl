@@ -6,10 +6,13 @@ from urllib import request, error, parse
 import socket
 import re
 import json
-import threading
-from subprocess import call
+import os
+import glob
 from bs4 import BeautifulSoup
 import random
+from .download import download
+from subprocess import call
+
 
 def urlopen_with_retry(attempt, *args, **kwargs):
     for i in range(attempt):
@@ -21,6 +24,7 @@ def urlopen_with_retry(attempt, *args, **kwargs):
             logging.debug('HTTP Error with code{}'.format(http_error.code))
         except Exception as e:
             logging.debug('urlopen_with_retry: %s' %e)
+
 
 def get_content(url, attempt):
     """Gets the content of a URL via sending a HTTP GET request.
@@ -81,6 +85,7 @@ def url_info(url):
         size = None
 
     return type, ext, size
+
 
 def pick_a_chinese_proxy():
     try:
@@ -160,6 +165,8 @@ def get_url_from_vid(vid, title):
     host = video_json['vl']['vi'][0]['ul']['ui'][0]['url']
     streams = video_json['fl']['fi']
     seg_cnt = video_json['vl']['vi'][0]['cl']['fc']
+
+    download_dict['title'] = title
     if seg_cnt == 0:
         seg_cnt = 1
 
@@ -198,36 +205,11 @@ def get_url_from_vid(vid, title):
             json.dump(download_dict, fp, sort_keys=True, indent=4)
 
 
-def download_with_aria2(url, out_file):
-    # TODO try to remove dependency
-    call(["/usr/local/aria2/bin/aria2c", "-x", '16', url, '-o', out_file])
-    pass
-
-
-def download(vid, title, urls, ext):
-    files = []
-    threads = []
-
-    for i, url in enumerate(urls):
-        filename = '{}[{}].{}'.format(title, i, ext)
-        t = threading.Thread(target=download_with_aria2, args=(url, filename))
-        files.append(filename)
-        threads.append(t)
-        t.start()
-
-    for t in threads:
-        t.join()
-
-
-    with open('{}.txt'.format(vid), 'w') as fp:
-        for filename in files:
-            fp.write("file '{}'\n".format(filename))
-
-
-
 def script_main(script_name, **kwargs):
-    logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
-    url = sys.argv[1]
+    logging.debug('script_main:')
+    url = kwargs['url']
+    ffmpeg_loacation = kwargs['ffmpeg_location']
+
 
     content = get_content(url, 2)
 
@@ -247,17 +229,35 @@ def script_main(script_name, **kwargs):
         logging.error('scrpt_main: can\'t get video urls or ext')
     urls = data['part_urls']
     ext = data['ext']
+    title = data['title']
     total_size = data['total_size']
-    download(vid, title, urls, ext)
+
+    logging.debug('script_main: total_size : %s' % total_size)
+    download(vid, title, urls, ext, **kwargs)
 
     # TODO try to remove dependency
-    call(['/Users/asurin/bin/ffmpeg', '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
+    call([ffmpeg_loacation, '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
           '{}.{}'.format(title, ext)])
-    # call(['/Users/asurin/bin/ffmpeg', '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
-    #       '{}.{}'.format(title, ext), '-v', '48'])
 
-    # TODO compare file size with total size
 
+    # compare file size with total size and clean up
+
+
+    if not os.path.isfile('{}.{}'.format(title, ext)):
+        print("Something went wrong")
+        sys.exit(1)
+
+    files_size = 0
+    to_remove = []
+    # TODO fix the match
+    for file in glob.glob('{}[??.{}'.format(title, ext)):
+        files_size += os.path.getsize(file)
+        to_remove.append(file)
+    if not kwargs['keep_tmp'] and files_size == total_size <= os.path.getsize('{}.{}'.format(title, ext)):
+        for file in to_remove:
+            os.remove(file)
+        os.remove('{}.json'.format(vid))
+        os.remove('{}.txt'.format(vid))
 
 
 def main(**kwargs):
