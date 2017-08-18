@@ -137,7 +137,6 @@ def get_content_through_proxy(url):
 
 
 def get_url_from_vid(vid, title):
-
     # a json file to save temporary information in case download failed
     try:
         with open('{}.json'.format(vid), 'r') as fp:
@@ -173,6 +172,8 @@ def get_url_from_vid(vid, title):
     best_quality = streams[-1]['name']
     part_format_id = streams[-1]['id']
 
+    download_dict['quality'] = best_quality
+
     part_urls = []
     total_size = 0
 
@@ -204,9 +205,11 @@ def get_url_from_vid(vid, title):
         with open('{}.json'.format(vid), 'w') as fp:
             json.dump(download_dict, fp, sort_keys=True, indent=4)
 
+    return download_dict
+
 
 def script_main(script_name, **kwargs):
-    logging.debug('script_main:')
+    logging.debug('script_main')
     url = kwargs['url']
     ffmpeg_loacation = kwargs['ffmpeg_location']
 
@@ -221,19 +224,23 @@ def script_main(script_name, **kwargs):
     title = vid if not title else title.group(1)
     logging.info('title: %s' % title)
 
-    get_url_from_vid(vid, title)
+    data = get_url_from_vid(vid, title)
 
-    with open('{}.json'.format(vid), 'r') as fp:
-        data = json.load(fp)
-    if data.get('part_urls') is None or data.get('ext') is None:
-        logging.error('scrpt_main: can\'t get video urls or ext')
+    # print(data)
+    print('title: %s' % data['title'])
+    print('type: %s' % data['ext'])
+    print('size: %s' % data['total_size'])
+    print('quality: %s' % data['quality'])
+
+
     urls = data['part_urls']
     ext = data['ext']
     title = data['title']
     total_size = data['total_size']
 
-    logging.debug('script_main: total_size : %s' % total_size)
-    download(vid, title, urls, ext, **kwargs)
+    logging.debug('script_main: total_size : %s' % data['total_size'])
+
+    part_files = download(data, **kwargs)
 
     # TODO try to remove dependency
     call([ffmpeg_loacation, '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
@@ -248,13 +255,12 @@ def script_main(script_name, **kwargs):
         sys.exit(1)
 
     files_size = 0
-    to_remove = []
     # TODO fix the match
-    for file in glob.glob('{}[??.{}'.format(title, ext)):
+    for file in part_files:
         files_size += os.path.getsize(file)
-        to_remove.append(file)
+
     if not kwargs['keep_tmp'] and files_size == total_size <= os.path.getsize('{}.{}'.format(title, ext)):
-        for file in to_remove:
+        for file in part_files:
             os.remove(file)
         os.remove('{}.json'.format(vid))
         os.remove('{}.txt'.format(vid))

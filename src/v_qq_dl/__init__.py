@@ -4,7 +4,7 @@ import logging
 import argparse
 
 def _real_main(**kwargs):
-
+    logging.debug('_real_main')
     parser = argparse.ArgumentParser(description='Download videos from v.qq.com', prog='v_qq_dl')
     parser.add_argument('url')
     parser.add_argument('--ffmpeg_location', action='store', help='Location of the ffmpeg binary')
@@ -12,7 +12,7 @@ def _real_main(**kwargs):
     parser.add_argument('-v', '--verbose', '--debug', dest='verbose', action='store_true', help='Print various debugging information')
     parser.add_argument('--keep_tmp', action='store_true', help='Keep temporary files')
     args = parser.parse_args()
-    print(args)
+    logging.debug(args)
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
