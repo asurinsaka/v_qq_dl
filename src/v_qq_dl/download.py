@@ -5,6 +5,8 @@ import threading
 import requests
 
 
+# TODO progress bar
+
 def direct_downloader(location, url, out_file):
     r = requests.get(url, stream=True)
     with open(out_file, 'wb') as f:
