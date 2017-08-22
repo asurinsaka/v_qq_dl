@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import sys
 import logging
@@ -7,12 +7,12 @@ import socket
 import re
 import json
 import os
-import glob
 from bs4 import BeautifulSoup
 import random
 from .download import download
 from subprocess import call
-
+import threading
+import time
 
 def urlopen_with_retry(attempt, *args, **kwargs):
     for i in range(attempt):
@@ -35,14 +35,14 @@ def get_content(url, attempt):
 
        Returns:
            The content as a string.
-       """
+    """
     logging.debug('get_content: %s' % url)
 
     req = request.Request(url)
     response = urlopen_with_retry(attempt, req)
     data = response.read()
-    # print(data.decode('utf-8'))
-    data = data.decode('utf-8')
+    logging.debug(data)
+    data = data.decode('utf-8', 'ignore')
     return data
 
 
@@ -102,19 +102,20 @@ def pick_a_chinese_proxy():
         all_proxies = []
         for row in soup.find_all('tr')[1:]:
             try:
-                ip = row.find_all('td')[0].text.strip()         # document.write('23222.1'.substr(2) + '25.32.75')
-                ip = re.search(r"'([0-9.]+)'.*'([0-9.]+)'", ip)
-                ip = ip.group(1)[2:] + ip.group(2)
+                td0 = row.find_all('td')[0].text.strip()         # document.write('23222.1'.substr(2) + '25.32.75')
+                raw_ip = re.search(r"'([0-9.]+)'.*'([0-9.]+)'", td0)
+                ip = raw_ip.group(1)[2:] + raw_ip.group(2)
                 port = row.find_all('td')[1].text.strip()
                 cur_proxy = "{}:{}".format(ip, port)
                 all_proxies.append(cur_proxy)
-            except Exception as e:
+            except Exception as e:                              # may raise exception when encounter google ads
                 logging.debug('pick_a_chinese_proxy: %s' % e)
         if all_proxies:
             data = {'proxy_list': all_proxies}
             with open('proxy.json', 'w') as fp:
                 json.dump(data, fp)
     return random.choice(all_proxies)
+
 
 def get_content_through_proxy(url):
 
@@ -136,19 +137,39 @@ def get_content_through_proxy(url):
             return data
 
 
+def get_part_info(part, url, part_info):
+    """
+    Get the content for each video part
+    :param part: The index of current part
+    :param url: address to get the information
+    :param part_info: a list to store the results
+    :return: None
+    """
+    time.sleep(random.randint(0, 5))        # to get rid of the 503 error
+    part_info[part] = get_content(url, 2)
+
+
 def get_url_from_vid(vid, title):
+    """
+    Get the file urls
+    :param vid: The vid of the video
+    :param title: The title of the video
+    :return: A dictionary with video segment info
+    """
+    logging.debug('get_url_from_vid(vid: {}, title: {}'.format(vid, title))
     # a json file to save temporary information in case download failed
     try:
         with open('{}.json'.format(vid), 'r') as fp:
             download_dict = json.load(fp)
+            return download_dict['part_urls'], download_dict['size']
     except FileNotFoundError:
         download_dict = {'vid': vid, 'title': title}
+
     info_api = 'http://vv.video.qq.com/getinfo?otype=json&appver=3.2.19.333&platform=11&defnpayver=1&vid={}'.format(vid)
-    if info_api in download_dict.keys():
-        info = download_dict[info_api]
-    else:
-        info = get_content(info_api, 2)
+
+    info = get_content(info_api, 2)
     video_json = json.loads(re.search(r'QZOutputJson=(.*);', info).group(1))
+    logging.debug(video_json)
 
     while video_json['exem'] == 1:
         info = get_content_through_proxy(info_api)
@@ -156,8 +177,6 @@ def get_url_from_vid(vid, title):
 
     if video_json['exem'] != 0:
         logging.error(video_json['msg'])
-
-    download_dict[info_api] = info
 
     fn_pre = video_json['vl']['vi'][0]['lnk']
     title = video_json['vl']['vi'][0]['ti']
@@ -170,49 +189,62 @@ def get_url_from_vid(vid, title):
         seg_cnt = 1
 
     best_quality = streams[-1]['name']
+    best_quality_cname = streams[-1]['cname']
+    size = streams[-1]['fs']
     part_format_id = streams[-1]['id']
 
     download_dict['quality'] = best_quality
 
-    part_urls = []
-    total_size = 0
+    logging.debug(video_json)
+    print('title: %s' % title)
+    # print('type: %s' % data['type'])
+    print('size: %.2f KB' % (size / 1024))
+    print('quality: %s' % best_quality_cname)
 
+    if download_dict.get('part_urls'):
+        return download_dict
+
+    threads = []
+    part_info_dict = {}
+
+
+
+    # get the video segment information through api
     for part in range(1, seg_cnt+1):
-        if 'part_urls' in download_dict.keys():
-            part_urls = download_dict['part_urls']
-            break
         filename = fn_pre + '.p' + str(part_format_id % 10000) + '.' + str(part) + '.mp4'
         key_api = "http://vv.video.qq.com/getkey?otype=json&platform=11&format={}&vid={}&filename={}&appver=3.2.19.333".format(
             part_format_id, vid, filename)
-        if key_api in download_dict.keys():
-            key_json = download_dict[key_api]
-        else:
-            part_info = get_content(key_api, 2)
-            key_json = json.loads(re.search(r'QZOutputJson=(.*);', part_info).group(1))
-            download_dict[key_api] = key_json
-        if key_json.get('key') is None:
-            logging.warning(key_json['msg'])
-            break
+
+        t = threading.Thread(target=get_part_info, args=(part, key_api, part_info_dict))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    logging.debug(part_info_dict)
+
+    part_urls = []
+    for part in range(1, seg_cnt+1):
+        filename = fn_pre + '.p' + str(part_format_id % 10000) + '.' + str(part) + '.mp4'
+        key_json = json.loads(re.search(r'QZOutputJson=(.*);', part_info_dict[part]).group(1))
         vkey = key_json['key']
         url = '{}{}?vkey={}'.format(host, filename, vkey)
         part_urls.append(url)
-        _, ext, size = url_info(url)
-        total_size += size
     else:
         download_dict['part_urls'] = part_urls
-        download_dict['ext'] = ext
-        download_dict['total_size'] = total_size
+        download_dict['size'] = size
         with open('{}.json'.format(vid), 'w') as fp:
             json.dump(download_dict, fp, sort_keys=True, indent=4)
 
-    return download_dict
+    return part_urls, size
 
 
 def script_main(script_name, **kwargs):
     logging.debug('script_main')
     url = kwargs['url']
     ffmpeg_loacation = kwargs['ffmpeg_location']
-
+    ext = 'mp4'
 
     content = get_content(url, 2)
 
@@ -224,31 +256,15 @@ def script_main(script_name, **kwargs):
     title = vid if not title else title.group(1)
     logging.info('title: %s' % title)
 
-    data = get_url_from_vid(vid, title)
+    urls, size = get_url_from_vid(vid, title)
 
-    # print(data)
-    print('title: %s' % data['title'])
-    print('type: %s' % data['ext'])
-    print('size: %s' % data['total_size'])
-    print('quality: %s' % data['quality'])
-
-
-    urls = data['part_urls']
-    ext = data['ext']
-    title = data['title']
-    total_size = data['total_size']
-
-    logging.debug('script_main: total_size : %s' % data['total_size'])
-
-    part_files = download(data, **kwargs)
+    part_files = download(vid, title, urls, size, **kwargs)
 
     # TODO try to remove dependency
     call([ffmpeg_loacation, '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
           '{}.{}'.format(title, ext)])
 
-
     # compare file size with total size and clean up
-
 
     if not os.path.isfile('{}.{}'.format(title, ext)):
         print("Something went wrong")
@@ -259,7 +275,7 @@ def script_main(script_name, **kwargs):
     for file in part_files:
         files_size += os.path.getsize(file)
 
-    if not kwargs['keep_tmp'] and files_size == total_size <= os.path.getsize('{}.{}'.format(title, ext)):
+    if not kwargs['keep_tmp'] and files_size == size <= os.path.getsize('{}.{}'.format(title, ext)):
         for file in part_files:
             os.remove(file)
         os.remove('{}.json'.format(vid))

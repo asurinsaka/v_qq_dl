@@ -1,0 +1,14 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.json
+
+bin/*.txt
+bin/*.json
+bin/*.mp4
+bin/*.aria2
+bin/*.download
+
+
+

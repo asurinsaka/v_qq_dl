@@ -3,6 +3,8 @@
 import logging
 import argparse
 
+
+# TODO write test
 def _real_main(**kwargs):
     logging.debug('_real_main')
     parser = argparse.ArgumentParser(description='Download videos from v.qq.com', prog='v_qq_dl')
