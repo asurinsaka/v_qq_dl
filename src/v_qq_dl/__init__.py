@@ -29,5 +29,6 @@ def main(**kwargs):
     try:
         _real_main(**kwargs)
     except Exception as e:
-        logging.debug(e)
+        logging.exception(e)
+        raise
 

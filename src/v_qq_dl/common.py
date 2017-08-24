@@ -14,16 +14,20 @@ from subprocess import call
 import threading
 import time
 
+
 def urlopen_with_retry(attempt, *args, **kwargs):
     for i in range(attempt):
         try:
             return request.urlopen(*args, **kwargs)
         except socket.timeout:
-            logging.debug('request attemp %s timeout: %s' % str(i + 1))
+            logging.exception('request attemp %s timeout: %s' % str(i + 1))
+            raise
         except error.HTTPError as http_error:
-            logging.debug('HTTP Error with code{}'.format(http_error.code))
+            logging.exception('HTTP Error with code{}'.format(http_error.code))
+            raise
         except Exception as e:
-            logging.debug('urlopen_with_retry: %s' %e)
+            logging.exception('urlopen_with_retry: %s' %e)
+            raise
 
 
 def get_content(url, attempt):
@@ -200,14 +204,15 @@ def get_url_from_vid(vid, title):
     # print('type: %s' % data['type'])
     print('size: %.2f KB' % (size / 1024))
     print('quality: %s' % best_quality_cname)
+    print('getting video segment urls')
+
+    logging.debug('get_url_from_vid: {} parts'.format(seg_cnt+1))
 
     if download_dict.get('part_urls'):
         return download_dict
 
     threads = []
     part_info_dict = {}
-
-
 
     # get the video segment information through api
     for part in range(1, seg_cnt+1):
@@ -258,7 +263,7 @@ def script_main(script_name, **kwargs):
 
     urls, size = get_url_from_vid(vid, title)
 
-    part_files = download(vid, title, urls, size, **kwargs)
+    part_files = download(vid, title, urls, **kwargs)
 
     # TODO try to remove dependency
     call([ffmpeg_loacation, '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',

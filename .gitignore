@@ -10,5 +10,7 @@ bin/*.mp4
 bin/*.aria2
 bin/*.download
 
+.idea/*
+
 
 
