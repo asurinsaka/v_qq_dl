@@ -1,5 +1,5 @@
 # Byte-compiled / optimized / DLL files
-__pycache__/
+src/v_qq_dl/__pycache__/
 *.py[cod]
 *$py.class
 *.json
@@ -9,6 +9,7 @@ bin/*.json
 bin/*.mp4
 bin/*.aria2
 bin/*.download
+bin/*.info
 
 .idea/*
 

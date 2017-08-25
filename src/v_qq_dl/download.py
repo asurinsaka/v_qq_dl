@@ -55,10 +55,10 @@ def write_data(filepath, data):
 def get_size(url):
     logging.debug('get_size: %s' % url)
     time.sleep(randint(0, 5))
-    r = requests.head(url)
+    r = requests.head(url, allow_redirects=True)
+    logging.debug(r.headers)
     size = int(r.headers['content-length'])
     return size
-
 
 # def support_continue(url):
 #     headers = {
