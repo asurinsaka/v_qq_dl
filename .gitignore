@@ -6,10 +6,12 @@ src/v_qq_dl/__pycache__/
 
 bin/*.txt
 bin/*.json
-bin/*.mp4
+bin/*/*.mp4
 bin/*.aria2
 bin/*.download
 bin/*.info
+
+web/config.py
 
 .idea/*
 

@@ -266,6 +266,8 @@ def script_main(script_name, **kwargs):
     part_files = download(vid, title, urls, **kwargs)
 
     # TODO try to remove dependency
+    if os.path.isfile('{}.{}'.format(title, ext)):
+        os.remove('{}.{}'.format(title, ext))
     call([ffmpeg_loacation, '-f', 'concat', '-safe', '0', '-i', '{}.txt'.format(vid), '-c', 'copy',
           '{}.{}'.format(title, ext)])
 

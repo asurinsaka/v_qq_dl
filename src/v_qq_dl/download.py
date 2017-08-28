@@ -12,8 +12,8 @@ import time
 from random import randint
 import pickle
 from collections import namedtuple
+from hashlib import md5
 
-# TODO Resume broken downloads
 # TODO maybe create a class?
 
 FileInfo = namedtuple('FileInfo', 'url filename size')
@@ -58,7 +58,8 @@ def get_size(url):
     r = requests.head(url, allow_redirects=True)
     logging.debug(r.headers)
     size = int(r.headers['content-length'])
-    return size
+    md5 = (r.headers['x-amz-meta-md5'])
+    return size, md5
 
 # def support_continue(url):
 #     headers = {
@@ -95,12 +96,15 @@ def direct_download(urls, title, ext):
 
     pool.close()
     pool.join()
-    sizes = {i: result.get() for i, result in results.items()}
+    print(results.items())
+    sizes = {i: result.get()[0] for i, result in results.items()}
+    md5s = {i: result.get()[1] for i, result in results.items()}
     logging.debug('direct_download: sizes: {}'.format(sizes))
     sizes = [sizes[i] for i in range(len(sizes))]
+    md5s = [sizes[i] for i in range(len(md5s))]
     logging.debug('direct_download: sizes: {}'.format(sizes))
+    logging.debug('direct_download: md5s: {}'.format(md5s))
 
-    total_size = sum(sizes)
     thread_count = 100
     args = []
     fps = []
@@ -111,7 +115,7 @@ def direct_download(urls, title, ext):
 
         workname = filename + '.download'
 
-        if os.path.isfile(info_file):
+        if os.path.isfile(info_file) and os.path.getsize(info_file) > 0:
             _x, blocks = read_data(info_file)
         else:
             block_count, remain = divmod(size, block_size)
@@ -128,26 +132,28 @@ def direct_download(urls, title, ext):
 
         fp = open(workname, 'rb+')
         fps.append(fp)
-        args.extend((url, blocks[i], fp, buffer_size) for i in range(len(blocks)) if blocks[i][1] < blocks[i][2])
+        new_args = [(url, blocks[i], fp, buffer_size) for i in range(len(blocks)) if blocks[i][1] < blocks[i][2]]
+        if new_args is not None:
+            args.extend(new_args)
 
     if thread_count > len(args):
         thread_count = len(args)
 
-    if thread_count == 0:
-        return files
+    if thread_count > 0:
+        threading.Thread(target=_progress_bar, args=(files, sizes)).start()
+        pool = ThreadPool(thread_count)
+        pool.map(_worker, args)
+        pool.close()
+        pool.join()
 
-    threading.Thread(target=_progress_bar, args=(files, total_size)).start()
-    pool = ThreadPool(thread_count)
-    pool.map(_worker, args)
-    pool.close()
-    pool.join()
+        for fp in fps:
+            fp.close()
 
-    for fp in fps:
-        fp.close()
-    for i, (url, filename, info_file, size) in enumerate(zip(urls, files, info_files, sizes)):
+    for i, (url, filename, info_file, size, md5) in enumerate(zip(urls, files, info_files, sizes, md5s)):
 
-        if not os.path.exists(filename):
-            workname = filename + '.download'
+        workname = filename + '.download'
+
+        if not os.path.isfile(filename):
             os.rename(workname, filename)
 
         if os.path.exists(info_file):
@@ -164,12 +170,13 @@ def _worker(args):
     url, block, fp, buffer_size = args
     headers = {'Range': 'bytes=%s-%s' % (block[1], block[2])}
     r = requests.get(url, stream=True, headers=headers)
+    # TODO :requests.exceptions.ChunkedEncodingError: ("Connection broken: ConnectionResetError(54, 'Connection reset by peer')", ConnectionResetError(54, 'Connection reset by peer'))
     for chunk in r.iter_content(buffer_size):
         with lock:
             fp.seek(block[1])
             fp.write(chunk)
             block[1] += len(chunk)
-        # print(block)
+        logging.debug('\_worker: {} {}'.format(block, headers))
 
 
 def _monitor(file_info, blocks, info_file):
@@ -180,10 +187,10 @@ def _monitor(file_info, blocks, info_file):
                 break
             write_data(info_file, (file_info, blocks))
         time.sleep(2)
-        # print(blocks)
+        logging.debug('_monitor: {} {} {}percent {}'.format(file_info.filename, file_info.size, percent, blocks))
 
 
-def _progress_bar(files, size):
+def _progress_bar(files, sizes):
     '''
     generate a progress bar while downloading
 
@@ -194,7 +201,8 @@ def _progress_bar(files, size):
     :return:
         void
     '''
-    # TODO add changes to progress_bar
+    # TODO add speed to progress_bar
+    size = sum(sizes)
     bar_size = 40
     char = ['-', '\\', '|', '/']
     pre = 0
@@ -204,11 +212,13 @@ def _progress_bar(files, size):
         count = 0
         # calculate size
         file_size = 0
-        for file in files:
+        for filesize, file in zip(sizes, files):
             if os.path.isfile(file + '.aria2'):
                 file_size += os.path.getsize(file)
             elif os.path.isfile(file + '.download'):
                 file_size += os.path.getsize(file + '.download')
+                if os.path.getsize(file + '.download') == filesize:
+                    count += 1
             elif os.path.isfile(file):
                 file_size += os.path.getsize(file)
                 count += 1
@@ -228,6 +238,7 @@ def _progress_bar(files, size):
         sys.stdout.write(char[i])
         sys.stdout.write(' ' * (bar_size - progress))
         sys.stdout.write(']\t{}/{} \t{} %  parts completed: {} / {}'.format(file_size, size, percent, count, len(files)))
+        logging.debug(' ')
         sys.stdout.flush()
         if file_size >= size:
             break
