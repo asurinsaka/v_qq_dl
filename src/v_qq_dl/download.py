@@ -144,8 +144,8 @@ def direct_download(urls, title, ext):
 
     if thread_count > 0:
         # Use a progress bar to show the downloading the progress
-        threading.Thread(target=_progress_bar, args=(files, sizes)).start()
         pool = ThreadPool(thread_count)
+        threading.Thread(target=_progress, args=(files, sizes, pool)).start()
         pool.map(_worker, args)
         pool.close()
         pool.join()
@@ -201,7 +201,31 @@ def _monitor(file_info, blocks, info_file):
         logging.debug('_monitor: {} {} {:.2%} % {}'.format(file_info.filename, file_info.size, percent, blocks))
 
 
-def _progress_bar(files, sizes):
+class ProgressBar:
+    _char = ['-', '\\', '|', '/']
+    _pre = -1
+    _i = 0
+    _progress = 0
+
+    def __init__(self, size=40):
+        self.size = size
+
+    def update(self, percent):
+        self._percent = percent
+        self._progress = int(percent * self.size)
+        if self._pre == self._progress:
+            self._i += 1
+            self._i %= self._char.__len__()
+        else:
+            self._i = 0
+            self._pre = self._progress
+
+    def __str__(self):
+        #return '[' + '-' * self._progress + ' ' * (self.size - self._progress) + ']'
+        return '[{:{width}}]\t{:7.2%}'.format('-'*(self._progress-1)+self._char[self._i], self._percent, width=self.size)
+
+
+def _progress(files, sizes, pool):
     '''
     generate a progress bar while downloading
 
@@ -212,15 +236,11 @@ def _progress_bar(files, sizes):
     :return:
         void
     '''
-    # TODO add speed to progress_bar
-    bar_size = 40
-    char = ['-', '\\', '|', '/']
-    pre = 0
-    i = 0
+    progress_bar = ProgressBar()
     pre_file_size = 0
-    while True:
 
-        count = 0
+    while True:
+        finished_file_count = 0
         # calculate size
         file_size = 0
         for filesize, file in zip(sizes, files):
@@ -229,28 +249,18 @@ def _progress_bar(files, sizes):
             elif os.path.isfile(file + '.download'):
                 file_size += os.path.getsize(file + '.download')
                 if os.path.getsize(file + '.download') == filesize:
-                    count += 1
+                    finished_file_count += 1
             elif os.path.isfile(file):
                 file_size += os.path.getsize(file)
-                count += 1
+                finished_file_count += 1
 
-        # generate the bar
+        # print the bar
         size = sum(sizes)
-        progress = int(file_size * bar_size / size)
-        percent = int(file_size * 100 / size)
+        percent = file_size / size
+        progress_bar.update(percent)
         sys.stdout.write("\r")
-        sys.stdout.write("[")
-        sys.stdout.write('-' * (progress - 1))
-        if pre == progress:
-            i += 1
-            i %= char.__len__()
-        else:
-            i = 0
-            pre = progress
-        sys.stdout.write(char[i])
-        sys.stdout.write(' ' * (bar_size - progress))
-        sys.stdout.write(']\t{:,} / {:,} \t{:,.2f} KB/s\t{} %  parts completed: {} / {}'
-                         .format(file_size, size, (file_size - pre_file_size) / 1000, percent, count, len(files)))
+        sys.stdout.write('{}\t{:,} / {:,} \t{:,.2f} KB/s\t parts completed: {} / {}'
+                         .format(progress_bar, file_size, size, (file_size - pre_file_size) / 1000, finished_file_count, len(files)))
         logging.debug(' ')
         sys.stdout.flush()
 
@@ -259,10 +269,6 @@ def _progress_bar(files, sizes):
         else:
             pre_file_size = file_size
             time.sleep(1)
-    # sys.stdout.write("\r")
-    # sys.stdout.write("[")
-    # sys.stdout.write('-' * (bar_size))
-    # sys.stdout.write(']\t{}/{} \t{} %  parts completed: {} / {}'.format(file_size, size, 100))
     sys.stdout.write('\n')
 
 
