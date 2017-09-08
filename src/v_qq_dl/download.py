@@ -58,8 +58,8 @@ def get_size(url):
     r = requests.head(url, allow_redirects=True)
     logging.debug(r.headers)
     size = int(r.headers['content-length'])
-    md5 = (r.headers['x-amz-meta-md5'])
-    return size, md5
+    file_md5 = r.headers.get('x-amz-meta-md5')
+    return size, file_md5
 
 # def support_continue(url):
 #     headers = {
@@ -101,7 +101,7 @@ def direct_download(urls, title, ext):
     md5s = {i: result.get()[1] for i, result in results.items()}
     logging.debug('direct_download: sizes: {}'.format(sizes))
     sizes = [sizes[i] for i in range(len(sizes))]
-    md5s = [sizes[i] for i in range(len(md5s))]
+    md5s = [md5s[i] for i in range(len(md5s))]
     logging.debug('direct_download: sizes: {}'.format(sizes))
     logging.debug('direct_download: md5s: {}'.format(md5s))
 
@@ -109,12 +109,15 @@ def direct_download(urls, title, ext):
     args = []
     fps = []
 
+    # Each thread is responsible for one block of the one media file, this for loop pack
+    # the arguments in the args list
     for i, (url, filename, info_file, size) in enumerate(zip(urls, files, info_files, sizes)):
         if os.path.isfile(filename):
             continue
 
         workname = filename + '.download'
 
+        # each block has 3 parts, the start of the block, the offset, the end of the block
         if os.path.isfile(info_file) and os.path.getsize(info_file) > 0:
             _x, blocks = read_data(info_file)
         else:
@@ -140,6 +143,7 @@ def direct_download(urls, title, ext):
         thread_count = len(args)
 
     if thread_count > 0:
+        # Use a progress bar to show the downloading the progress
         threading.Thread(target=_progress_bar, args=(files, sizes)).start()
         pool = ThreadPool(thread_count)
         pool.map(_worker, args)
@@ -149,7 +153,7 @@ def direct_download(urls, title, ext):
         for fp in fps:
             fp.close()
 
-    for i, (url, filename, info_file, size, md5) in enumerate(zip(urls, files, info_files, sizes, md5s)):
+    for i, (url, filename, info_file, size, file_md5) in enumerate(zip(urls, files, info_files, sizes, md5s)):
 
         workname = filename + '.download'
 
@@ -169,7 +173,14 @@ def direct_download(urls, title, ext):
 def _worker(args):
     url, block, fp, buffer_size = args
     headers = {'Range': 'bytes=%s-%s' % (block[1], block[2])}
-    r = requests.get(url, stream=True, headers=headers)
+    for i in range(2):
+        try:
+            r = requests.get(url, stream=True, headers=headers)
+        except Exception as e:
+            logging.debug(e)
+            time.sleep(randint(0, 5))
+    if not r:
+        return 1
     # TODO :requests.exceptions.ChunkedEncodingError: ("Connection broken: ConnectionResetError(54, 'Connection reset by peer')", ConnectionResetError(54, 'Connection reset by peer'))
     for chunk in r.iter_content(buffer_size):
         with lock:
@@ -182,12 +193,12 @@ def _worker(args):
 def _monitor(file_info, blocks, info_file):
     while True:
         with lock:
-            percent = sum([block[1] - block[0] for block in blocks]) * 100 / file_info.size
-            if percent >= 100:
+            percent = sum([block[1] - block[0] for block in blocks]) / file_info.size
+            if percent >= 1:
                 break
             write_data(info_file, (file_info, blocks))
         time.sleep(2)
-        logging.debug('_monitor: {} {} {}percent {}'.format(file_info.filename, file_info.size, percent, blocks))
+        logging.debug('_monitor: {} {} {:.2%} % {}'.format(file_info.filename, file_info.size, percent, blocks))
 
 
 def _progress_bar(files, sizes):
@@ -202,11 +213,11 @@ def _progress_bar(files, sizes):
         void
     '''
     # TODO add speed to progress_bar
-    size = sum(sizes)
     bar_size = 40
     char = ['-', '\\', '|', '/']
     pre = 0
     i = 0
+    pre_file_size = 0
     while True:
 
         count = 0
@@ -224,6 +235,7 @@ def _progress_bar(files, sizes):
                 count += 1
 
         # generate the bar
+        size = sum(sizes)
         progress = int(file_size * bar_size / size)
         percent = int(file_size * 100 / size)
         sys.stdout.write("\r")
@@ -237,12 +249,15 @@ def _progress_bar(files, sizes):
             pre = progress
         sys.stdout.write(char[i])
         sys.stdout.write(' ' * (bar_size - progress))
-        sys.stdout.write(']\t{}/{} \t{} %  parts completed: {} / {}'.format(file_size, size, percent, count, len(files)))
+        sys.stdout.write(']\t{:,} / {:,} \t{:,.2f} KB/s\t{} %  parts completed: {} / {}'
+                         .format(file_size, size, (file_size - pre_file_size) / 1000, percent, count, len(files)))
         logging.debug(' ')
         sys.stdout.flush()
+
         if file_size >= size:
             break
         else:
+            pre_file_size = file_size
             time.sleep(1)
     # sys.stdout.write("\r")
     # sys.stdout.write("[")
