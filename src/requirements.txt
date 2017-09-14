@@ -1,0 +1,7 @@
+requests==2.12.4
+Flask==0.12
+pathos==0.2.1
+beautifulsoup4==4.6.0
+flask_bootstrap==3.3.7.1
+flask_wtf==0.14.2
+WTForms==2.1

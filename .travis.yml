@@ -1,0 +1,7 @@
+language: python
+python:
+- "3.5"
+install:
+- pip install -r src/requirements.txt
+script:
+- /Users/asurin/PycharmProjects/v_qq_dl/src/test
